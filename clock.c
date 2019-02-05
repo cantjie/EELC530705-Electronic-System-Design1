@@ -6,6 +6,10 @@
 #define MAX_MUSIC_LENGTH 40
 #define TIMER0_BEAT_LENGTH 4  // delay time of 1/4 beat ,
 
+#define STOPWATCH_STOPING 0x00 
+#define STOPWATCH_COUNTING 0x01
+#define STOPWATCH_PAUSING 0x02
+
 sbit beep_pin = P1 ^ 6;
 
 typedef struct Time
@@ -34,6 +38,12 @@ typedef struct Music {
 	unsigned char beat_len[MAX_MUSIC_LENGTH];
 	unsigned char playing_index;
 } music;
+
+typedef struct Stopwatch {
+	unsigned char minute;
+	unsigned char second;
+	unsigned char centisecond;
+} stopwatch;
 
 // from 0 to 9, and blank, _, -, E
 unsigned char code led_table[] = {0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f,0x00,0x08,0x40,0x79 };
@@ -95,11 +105,13 @@ unsigned char G_score_to_TL[27] = {
 	0x46,0x76,0xA1,0xB5,0xD9,0xF9,0x14
 };
 
+unsigned char G_stopwatch_state = STOPWATCH_STOPING; 
 
 
 unsigned char G_max_day[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 unsigned char G_time_array[8] = { 0,0,12,0,0,12,0,0 };
 unsigned char G_date_array[12] = { 2,0,1,9,12,0,1,12,0,1,10,10 };
+unsigned char G_stopwatch_array[8] = { 0,0,12,0,0,12,0,0 };
 
 unsigned char G_clock_array[8] = { 0,10,10,0,0,12,0,0 }; //first bit for setting music, last 5 bits for setting clock time;
 
@@ -107,12 +119,15 @@ time G_current_time = { 2019,1,1,0,0,0,0};
 time *G_pointer_current_time = &(G_current_time);
 clock G_clock = { 0,0,0 };
 clock *G_pointer_clock = &(G_clock);
+stopwatch G_stopwatch = { 0,0,0 };
+stopwatch *G_pointer_stopwatch = &G_stopwatch;
+
 
 unsigned char G_clock_hour = 0;
 unsigned char G_clock_minute = 0;
 unsigned char G_clock_music = 0;
 
-void timeToArray(time *ptr);
+void timeToArray(time *ptr,unsigned char *tar_array);
 
 /********************/
 
@@ -239,27 +254,41 @@ clock *clockCorrection(clock *clk) {
 	return clk;
 }
 
-void timeToArray(time *ptr) {
-	G_time_array[7] = ptr->second % 10;
-	G_time_array[6] = ptr->second / 10;
-	G_time_array[4] = ptr->minute % 10;
-	G_time_array[3] = ptr->minute / 10;
-	G_time_array[1] = ptr->hour % 10;
-	G_time_array[0] = ptr->hour / 10;
+stopwatch *stopwatchCorrection(stopwatch *stopwatch_ptr) {
+	if (stopwatch_ptr->centisecond >= 100) {
+		stopwatch_ptr->centisecond = 0;
+		stopwatch_ptr->second++;
+	}
+	if (stopwatch_ptr->second >= 60) {
+		stopwatch_ptr->minute++;
+		stopwatch_ptr->second = 0;
+	}
+	if (stopwatch_ptr->minute > 99) {
+		stopwatch_ptr->minute = 0;
+	}
+	return stopwatch_ptr;
 }
 
-void dateToArray(time *ptr) {
-	unsigned int temp = 0;
-	G_date_array[9] = ptr->day % 10;
-	G_date_array[8] = ptr->day / 10;	
+void timeToArray(time *ptr,unsigned char *tar_array) {
+	tar_array[7] = ptr->second % 10;
+	tar_array[6] = ptr->second / 10;
+	tar_array[4] = ptr->minute % 10;
+	tar_array[3] = ptr->minute / 10;
+	tar_array[1] = ptr->hour % 10;
+	tar_array[0] = ptr->hour / 10;
+}
 
-	G_date_array[6] = ptr->month % 10;
-	G_date_array[5] = ptr->month / 10;
+void dateToArray(time *ptr,unsigned char *tar_array) {
+	tar_array[9] = ptr->day % 10;
+	tar_array[8] = ptr->day / 10;
+
+	tar_array[6] = ptr->month % 10;
+	tar_array[5] = ptr->month / 10;
 	
-	G_date_array[0] = ptr->year / 1000;
-	G_date_array[1] = (ptr->year % 1000) / 100;
-	G_date_array[2] = (ptr->year % 100) / 10;
-	G_date_array[3] = ptr->year % 10;
+	tar_array[0] = ptr->year / 1000;
+	tar_array[1] = (ptr->year % 1000) / 100;
+	tar_array[2] = (ptr->year % 100) / 10;
+	tar_array[3] = ptr->year % 10;
 }
 
 void clockToArray(clock *clk) {
@@ -270,13 +299,27 @@ void clockToArray(clock *clk) {
 	G_clock_array[0] = clk->music;
 }
 
+void stopwatchToArray(stopwatch *stopwatch_ptr, unsigned char *tar_array) {
+	tar_array[7] = stopwatch_ptr->centisecond % 10;
+	tar_array[6] = stopwatch_ptr->centisecond / 10;
+	tar_array[4] = stopwatch_ptr->second % 10;
+	tar_array[3] = stopwatch_ptr->second / 10;
+	tar_array[1] = stopwatch_ptr->minute % 10;
+	tar_array[0] = stopwatch_ptr->minute / 10;
+}
+
 // when 1s passes, call this function to increase the second
 time *timeAutoIncrement(time *ptr) {
 	ptr->second++;
 	timeCorrection(ptr, 0);																							   
-	timeToArray(ptr);
-	dateToArray(ptr);
+	timeToArray(ptr,&G_time_array);
+	dateToArray(ptr,&G_date_array);
 	return ptr;	
+}
+
+stopwatch *stopwatchIncrement(stopwatch *stopwatch_ptr) {
+	stopwatch_ptr->centisecond++;
+	return stopwatchCorrection(stopwatch_ptr);
 }
 
 //call this function every timer1 break in mode 0
@@ -403,6 +446,13 @@ void displayClockBlink(unsigned char shift_bit) {
 	}
 }
 
+void displayStopwatch() {
+	unsigned char shift;
+	shift = G_timer1_count % 8;
+	XBYTE[0x8000] = 0x80 >> shift;
+	XBYTE[0x9000] = led_table[G_stopwatch_array[shift]];
+}
+
 unsigned char modeSwitch(unsigned char current_mode) {
 	/*
 		0 for displaying time, hh-mm-ss
@@ -414,20 +464,25 @@ unsigned char modeSwitch(unsigned char current_mode) {
 
 		1 for showing date, yyyy-mm-dd,rolling
 	*/
-
-	if (current_mode == 0) {
+	switch (current_mode)
+	{
+	case 0:
 		return 1;
+		break;
+	case 1:
+		G_rolling_shift = 0;
+		break;
+	case 2: case 3: case 4:
+		G_setting_bit = 0;
+		G_timer1_count = 0;
+		break;
+	case 5:
+		G_stopwatch_state = 0;
+		break;
+	default:
+		break;
 	}
-	else
-	{	
-		if (current_mode == 1) {
-			G_rolling_shift = 0;
-		}
-		else {
-			G_setting_bit = 0;
-		}
-		return (current_mode + 1) % 7 ;
-	}
+	return (current_mode + 1) % 7 ;
 }
 
 time *setTime(time *ptr, unsigned char shift_bit) {
@@ -529,6 +584,9 @@ void dealWithKeyPressed(unsigned char keycode) {
 			case 4:
 				G_setting_bit = (G_setting_bit + 1) % 5;
 				break;
+			case 5:
+				//todo
+				break;
 			default:
 				break;
 			}
@@ -539,15 +597,18 @@ void dealWithKeyPressed(unsigned char keycode) {
 				{
 				case 2:
 					setTime(G_pointer_current_time, G_setting_bit);
-					timeToArray(G_pointer_current_time);
+					timeToArray(G_pointer_current_time,&G_time_array);
 					break;
 				case 3:
 					setDate(G_pointer_current_time, G_setting_bit);
-					dateToArray(G_pointer_current_time);
+					dateToArray(G_pointer_current_time,&G_date_array);
 					break;
 				case 4:
 					setClock(G_pointer_clock,G_setting_bit);
 					clockToArray(G_pointer_clock);
+					break;
+				case 5:
+					//todo
 					break;
 				default:
 					break;
@@ -561,8 +622,9 @@ void dealWithKeyPressed(unsigned char keycode) {
 	}
 }
 
-//display different routine work in different mode
-void display(unsigned char mode) {
+//execute different routine work in different mode
+//this function relies on timer1's interruption.
+void execute(unsigned char mode) {
 	switch (mode)
 	{
 	case 0:
@@ -580,6 +642,25 @@ void display(unsigned char mode) {
 	case 4:
 		displayClockBlink(G_setting_bit);
 		break;
+	case 5:
+		if (G_stopwatch_state == STOPWATCH_COUNTING || G_stopwatch_state == STOPWATCH_PAUSING) {
+			G_timer1_count++;
+			if (G_timer1_count >= 40) { //40 = 5 * 8
+				G_timer1_count = 0;
+			}
+			
+			if (G_timer1_count % 5 == 0) {
+				stopwatchIncrement(G_pointer_stopwatch);
+			}
+
+			if (G_stopwatch == STOPWATCH_COUNTING) {
+				stopwatchToArray(G_pointer_stopwatch, &G_stopwatch_array);
+			}
+		}
+		displayStopwatch();
+		break;
+
+		//todo add new mode.
 	default:
 		XBYTE[0x8000] = 0x40 ;
 		XBYTE[0x9000] = led_table[mode];
@@ -637,9 +718,6 @@ void main() {
 
 	timerAndInterruptInit();
 
-
-	//startPlayMusic(1);
-
 	while(1) {
 		
 		//1s has passed, change time and check whether it's the clock time;
@@ -684,7 +762,7 @@ void main() {
 
 		// 2ms passed , excute routine work(display next 7-seg-led)
 		if (G_timer1_flag) {
-			display(G_mode);
+			execute(G_mode);
 			G_timer1_flag = 0;
 		}
 
@@ -701,7 +779,8 @@ void main() {
 			G_keycode = 0;
 		}
 	}
-	// never reach here;
+
+	// never reaches here;
 	return ;
 }
 
@@ -716,7 +795,6 @@ void timer0() interrupt 1 {
 }
 
 void timer1() interrupt 3{
-	//todo music, TH,TL
 	if (G_music_playing_ptr) {
 		TH1 = G_TIMER1_TH;
 		TL1 = G_TIMER1_TL;
@@ -728,5 +806,6 @@ void timer1() interrupt 3{
 	}
 	G_timer1_count++;
 	G_timer1_flag = 1;
+	//todo stopwatch
 }
  
