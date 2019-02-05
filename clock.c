@@ -409,7 +409,9 @@ unsigned char modeSwitch(unsigned char current_mode) {
 		2 for setting time, hh-mm-ss , make the bit being changed blink
 		3 for setting date, yyyymmdd,
 		4 for setting clock.
-		
+		5 for stopwatch mode.
+		6 for countdown timer.
+
 		1 for showing date, yyyy-mm-dd,rolling
 	*/
 
@@ -424,8 +426,7 @@ unsigned char modeSwitch(unsigned char current_mode) {
 		else {
 			G_setting_bit = 0;
 		}
-		return (current_mode + 1) % 5 ;
-		// todo, make this 5 later
+		return (current_mode + 1) % 7 ;
 	}
 }
 
@@ -592,8 +593,8 @@ void startPlayMusic(unsigned char music_num) {
 	{
 	case 1:
 		G_music_playing_ptr = &music_mother;
-		//todo 
 		break;
+		//todo add new music
 	default:
 		break;
 	}
@@ -653,6 +654,7 @@ void main() {
 			}
 		}
 
+		//play music
 		if (G_music_playing_ptr) {    
 			if (G_timer0_music_count == TIMER0_BEAT_LENGTH * G_beat_length) {
 				G_timer0_music_count = 0;
@@ -721,9 +723,10 @@ void timer1() interrupt 3{
 		beep_pin = !beep_pin;
 	}
 	else {
-		TH1 = 0xF8;		// load 63692 to timer1 ，about 2ms
-		TL1 = 0xCC;
+		TH1 = 0xF8;		// load 63692 to timer1 ，about 2ms 
+		TL1 = 0xCC;		// in stopwatch mode, the time displayed is about 3 seconds faster than real time per minute
 	}
 	G_timer1_count++;
 	G_timer1_flag = 1;
 }
+ 
