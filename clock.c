@@ -579,13 +579,31 @@ void dealWithKeyPressed(unsigned char keycode) {
 				G_setting_bit = (G_setting_bit + 1) % 2;
 				break;
 			case 3:
-				G_setting_bit = (G_setting_bit + 1) % 8;  // will compiler optimize %2, %8 ? to &0x01,0x07 ?
+				G_setting_bit = (G_setting_bit + 1) % 8;  // will compiler optimize %2, %8 to &0x01,&0x07 ?
 				break;
 			case 4:
 				G_setting_bit = (G_setting_bit + 1) % 5;
 				break;
 			case 5:
-				//todo
+				// key(L) pressed
+				switch (G_stopwatch_state)
+				{
+				case STOPWATCH_STOPING:
+					//start count
+					G_stopwatch_state = STOPWATCH_COUNTING;
+					G_timer1_count = 0;
+					break;
+				case STOPWATCH_COUNTING:
+					//pause display, but still counting 
+					G_stopwatch_state = STOPWATCH_PAUSING;
+					break;
+				case STOPWATCH_PAUSING:
+					//jump to current counting result, still counting, but pause display
+					stopwatchToArray(G_pointer_stopwatch, &G_stopwatch_array);
+					break;
+				default:
+					break;
+				}
 				break;
 			default:
 				break;
@@ -608,7 +626,27 @@ void dealWithKeyPressed(unsigned char keycode) {
 					clockToArray(G_pointer_clock);
 					break;
 				case 5:
-					//todo
+					//todo key(R) pressed
+					switch (G_stopwatch_state)
+					{
+					case STOPWATCH_STOPING:
+						//reset to 0
+						G_pointer_stopwatch->centisecond = 0;
+						G_pointer_stopwatch->second = 0;
+						G_pointer_stopwatch->minute = 0;
+						stopwatchToArray(G_pointer_stopwatch, &G_stopwatch_array);
+						break;
+					case STOPWATCH_COUNTING:
+						//stop counting, display the result.
+						G_stopwatch_state = STOPWATCH_STOPING;
+						break;
+					case STOPWATCH_PAUSING:
+						// catch up with the real time counting result,resume counting
+						G_stopwatch_state = STOPWATCH_COUNTING;
+						break;
+					default:
+						break;
+					}
 					break;
 				default:
 					break;
@@ -644,7 +682,6 @@ void execute(unsigned char mode) {
 		break;
 	case 5:
 		if (G_stopwatch_state == STOPWATCH_COUNTING || G_stopwatch_state == STOPWATCH_PAUSING) {
-			G_timer1_count++;
 			if (G_timer1_count >= 40) { //40 = 5 * 8
 				G_timer1_count = 0;
 			}
@@ -653,7 +690,7 @@ void execute(unsigned char mode) {
 				stopwatchIncrement(G_pointer_stopwatch);
 			}
 
-			if (G_stopwatch == STOPWATCH_COUNTING) {
+			if (G_stopwatch_state == STOPWATCH_COUNTING) {
 				stopwatchToArray(G_pointer_stopwatch, &G_stopwatch_array);
 			}
 		}
