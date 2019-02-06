@@ -2,7 +2,7 @@
 #include <absacc.h>
 
 #define TIMER0_SECOND_COUNT 20
-#define MUSIC_NUMBER 1  // below 10 //todo
+#define MUSIC_NUMBER 2  // below 10 //todo
 #define MAX_MUSIC_LENGTH 40
 #define TIMER0_BEAT_LENGTH 4  // delay time of 1/4 beat ,
 
@@ -36,7 +36,6 @@ typedef struct Clock
 
 typedef struct Music {
 	unsigned char len;
-	//todo change MAX_MUSIC_LENGTH, 100 is improper. 
 	unsigned char score[MAX_MUSIC_LENGTH];
 	unsigned char beat_len[MAX_MUSIC_LENGTH];
 	unsigned char playing_index;
@@ -82,6 +81,12 @@ music music_mother = {
 	{16,15,13,15,21,16,15,16, 13,15,16,15,13,12,11,6,15,13,12, 12,13,15,15,16,13,12,11, 15,13,12,11,6,11,5},
 	{3, 1, 2 ,2, 2, 2, 1, 4,  2, 1, 1, 2, 1, 1, 1, 1, 1,1, 4,  3, 1, 2, 1, 1, 3, 1, 4,
 	  3, 1, 1, 1, 1,1, 4},
+	0
+};
+music music_if_love = {
+	37,
+	{13,12,11,7,11,12,13,13,15,16,17,16,15,12,13,8,13,15,16,15,13,12,13,14,13,12,11,6,7,11,12,13,12,7,5,6,8},
+	{6,3,1,2,4,2,4,1,1,6,3,1,1,1,6,4,1,1,6,4,1,1,3,1,1,1,4,1,1,4,1,1,3,1,1,6,4},
 	0
 };
 
@@ -889,6 +894,8 @@ void startPlayMusic(unsigned char music_num) {
 	case 1:
 		G_music_playing_ptr = &music_mother;
 		break;
+	case 2:
+		G_music_playing_ptr = &music_if_love;
 		//todo add new music
 	default:
 		break;
@@ -1019,7 +1026,12 @@ void timer1() interrupt 3{
 	if (G_music_playing_ptr) {
 		TH1 = G_TIMER1_TH;
 		TL1 = G_TIMER1_TL;
-		beep_pin = !beep_pin;
+		if (G_TIMER1_TH == 0x00 && G_TIMER1_TL == 0x00) {
+			beep_pin = 1;
+		}
+		else {
+			beep_pin = !beep_pin;
+		}
 	}
 	else {
 		TH1 = 0xF8;		// load 63692 to timer1 ，about 2ms 
