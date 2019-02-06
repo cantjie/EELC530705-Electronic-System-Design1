@@ -2,13 +2,16 @@
 #include <absacc.h>
 
 #define TIMER0_SECOND_COUNT 20
-#define CLOCK_MUSIC_NUMBER 1  // below 10 //todo
+#define MUSIC_NUMBER 1  // below 10 //todo
 #define MAX_MUSIC_LENGTH 40
 #define TIMER0_BEAT_LENGTH 4  // delay time of 1/4 beat ,
 
 #define STOPWATCH_STOPING 0x00 
 #define STOPWATCH_COUNTING 0x01
 #define STOPWATCH_PAUSING 0x02
+
+#define COUNTDOWN_TIMER_COUNTING 0x01
+#define COUNTDOWN_TIMER_STOPING 0x00
 
 sbit beep_pin = P1 ^ 6;
 
@@ -44,6 +47,12 @@ typedef struct Stopwatch {
 	unsigned char second;
 	unsigned char centisecond;
 } stopwatch;
+
+typedef struct CountdownTimer {
+	unsigned char minute;
+	unsigned char second;
+	unsigned char music;
+} countdownTimer;
 
 // from 0 to 9, and blank, _, -, E
 unsigned char code led_table[] = {0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f,0x00,0x08,0x40,0x79 };
@@ -107,13 +116,14 @@ unsigned char G_score_to_TL[27] = {
 
 unsigned char G_stopwatch_state = STOPWATCH_STOPING; 
 
+unsigned char G_countdown_timer_state = COUNTDOWN_TIMER_STOPING;
 
 unsigned char G_max_day[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 unsigned char G_time_array[8] = { 0,0,12,0,0,12,0,0 };
 unsigned char G_date_array[12] = { 2,0,1,9,12,0,1,12,0,1,10,10 };
 unsigned char G_stopwatch_array[8] = { 0,0,12,0,0,12,0,0 };
-
-unsigned char G_clock_array[8] = { 0,10,10,0,0,12,0,0 }; //first bit for setting music, last 5 bits for setting clock time;
+unsigned char G_clock_array[8] = { 0,10,10,0,0,12,0,0 }; //X--HH-MM x for setting music, HH-MM for setting clock time;
+unsigned char G_countdown_timer_array[8] = { 0,10,0,0,0,12,0,0 }; //X-MMM-SS, X for music, MMM-SS for time;
 
 time G_current_time = { 2019,1,1,0,0,0,0};
 time *G_pointer_current_time = &(G_current_time);
@@ -121,6 +131,8 @@ clock G_clock = { 0,0,0 };
 clock *G_pointer_clock = &(G_clock);
 stopwatch G_stopwatch = { 0,0,0 };
 stopwatch *G_pointer_stopwatch = &G_stopwatch;
+countdownTimer G_countdown_timer = { 0,0,0 };
+countdownTimer *G_pointer_countdown_timer = &G_countdown_timer;
 
 
 unsigned char G_clock_hour = 0;
@@ -128,6 +140,8 @@ unsigned char G_clock_minute = 0;
 unsigned char G_clock_music = 0;
 
 void timeToArray(time *ptr,unsigned char *tar_array);
+void startPlayMusic(unsigned char music_num);
+
 
 /********************/
 
@@ -269,6 +283,41 @@ stopwatch *stopwatchCorrection(stopwatch *stopwatch_ptr) {
 	return stopwatch_ptr;
 }
 
+countdownTimer *countdownTimerCorrection(countdownTimer *countdown_timer_ptr,unsigned char setting_mode) {
+	if (setting_mode) {
+		// in fact some of the minute correction work is done in setCountdownTimer() function
+		// setting mode
+		if (countdown_timer_ptr->second >= 60) {
+			countdown_timer_ptr->second -= 60;
+		}
+		if (countdown_timer_ptr->minute > 250) {
+			countdown_timer_ptr->minute -= 200;
+			//switch (G_setting_bit)
+			//{
+			//case 3:case 4:
+			//	countdown_timer_ptr->minute -= 200;
+			//	break;
+			//default:
+			//	countdown_timer_ptr->minute = 0;
+			//	break;
+			//}
+		}
+	}
+	else {
+		//counting down mode
+		if (countdown_timer_ptr->second == 0xFF) {
+			countdown_timer_ptr->second = 59;
+			countdown_timer_ptr->minute--;
+		}
+		if (countdown_timer_ptr->minute == 0xFF) {
+			// shouldn't reach here.
+			countdown_timer_ptr->minute = 250;
+		}
+	}
+
+	return countdown_timer_ptr;
+}
+
 void timeToArray(time *ptr,unsigned char *tar_array) {
 	tar_array[7] = ptr->second % 10;
 	tar_array[6] = ptr->second / 10;
@@ -308,8 +357,20 @@ void stopwatchToArray(stopwatch *stopwatch_ptr, unsigned char *tar_array) {
 	tar_array[0] = stopwatch_ptr->minute / 10;
 }
 
+void countdownTimerToArray(countdownTimer *countdown_timer_ptr, unsigned char *tar_array) {
+	tar_array[7] = countdown_timer_ptr->second % 10;
+	tar_array[6] = countdown_timer_ptr->second / 10;
+
+	tar_array[2] = countdown_timer_ptr->minute / 100;
+	//tar_array[3] = (countdown_timer_ptr->minute % 100) / 10;
+	tar_array[3] = (countdown_timer_ptr->minute - tar_array[2] * 100) / 10;
+	tar_array[4] = countdown_timer_ptr->minute % 10;
+
+	tar_array[0] = countdown_timer_ptr->music;
+}
+
 // when 1s passes, call this function to increase the second
-time *timeAutoIncrement(time *ptr) {
+time *timeIncrease(time *ptr) {
 	ptr->second++;
 	timeCorrection(ptr, 0);																							   
 	timeToArray(ptr,&G_time_array);
@@ -317,9 +378,23 @@ time *timeAutoIncrement(time *ptr) {
 	return ptr;	
 }
 
-stopwatch *stopwatchIncrement(stopwatch *stopwatch_ptr) {
+stopwatch *stopwatchIncrease(stopwatch *stopwatch_ptr) {
 	stopwatch_ptr->centisecond++;
 	return stopwatchCorrection(stopwatch_ptr);
+}
+
+countdownTimer *countdownTimerDecreaseOrPlayMusic(countdownTimer *countdown_timer_ptr) {
+	countdown_timer_ptr->second--;
+	countdownTimerCorrection(countdown_timer_ptr,0x00);
+
+	if (countdown_timer_ptr->minute == 0 && countdown_timer_ptr->second == 0) {
+		G_countdown_timer_state = COUNTDOWN_TIMER_STOPING;
+		startPlayMusic(countdown_timer_ptr->music);
+		countdown_timer_ptr->music = 0;
+	}
+
+	countdownTimerToArray(countdown_timer_ptr, &G_countdown_timer_array);
+	return  countdown_timer_ptr;
 }
 
 //call this function every timer1 break in mode 0
@@ -330,7 +405,7 @@ void displayTime() {
 	XBYTE[0x9000] = led_table[G_time_array[shift]];
 }
 
-// mode 1
+//used in mode 1
 void displayDateRolling() {
 	unsigned char bit_to_show_in_date_array;
 	unsigned char bit_to_show_in_eight_leds;
@@ -453,6 +528,44 @@ void displayStopwatch() {
 	XBYTE[0x9000] = led_table[G_stopwatch_array[shift]];
 }
 
+//shift_bit is between 0 to 6; 0&1 for second, 2~4 for minute, 5 for music choosing, 6 for not blink(not set)
+void displayCountdownTimerBlink(unsigned char shift_bit) {
+	unsigned char blink = 0;
+	unsigned char shift = 0; // bit to show
+	unsigned char blink_shift = 0; // bit to blink
+	shift = G_timer1_count % 8;
+	if (shift_bit == 6) {
+		XBYTE[0x8000] = 0x80 >> shift;
+		XBYTE[0x9000] = led_table[G_countdown_timer_array[shift]];
+	}
+	else {
+		if ((G_timer1_count & 0x40) == 0x40) {
+			blink ^= 0x01;
+		}
+		switch (shift_bit)
+		{
+		case 0: case 1:
+			blink_shift = 7 - shift_bit;
+			break;
+		case 2: case 3: case 4:
+			blink_shift = 6 - shift_bit;
+			break;
+		case 5:
+			blink_shift = 0;
+			break;
+		default:
+			break;
+		}
+		XBYTE[0x8000] = 0x80 >> shift;
+		if (blink_shift == shift) {
+			XBYTE[0x9000] = blink ? led_table[G_countdown_timer_array[shift]] : 0x00;
+		}
+		else {
+			XBYTE[0x9000] = led_table[G_countdown_timer_array[shift]];
+		}
+	}
+}
+
 unsigned char modeSwitch(unsigned char current_mode) {
 	/*
 		0 for displaying time, hh-mm-ss
@@ -477,7 +590,10 @@ unsigned char modeSwitch(unsigned char current_mode) {
 		G_timer1_count = 0;
 		break;
 	case 5:
-		G_stopwatch_state = 0;
+		G_stopwatch_state = STOPWATCH_STOPING;
+		break;
+	case 6:
+		G_setting_bit = 0;
 		break;
 	default:
 		break;
@@ -550,12 +666,65 @@ clock *setClock(clock *clk, unsigned char shift_bit) {
 		clk->hour += 10;
 		break;
 	case 4:
-		clk->music = clk->music >= CLOCK_MUSIC_NUMBER ? 0 : (clk->music + 1);
+		clk->music = clk->music >= MUSIC_NUMBER ? 0 : (clk->music + 1);
 		break;
 	default:
 		break;
 	}
 	return clockCorrection(clk);
+}
+
+countdownTimer *setCountdownTimer(countdownTimer *countdown_timer_ptr, unsigned char shift_bit) {
+	switch (shift_bit)
+	{
+	case 0:
+		countdown_timer_ptr->second++;
+		break;
+	case 1:
+		countdown_timer_ptr->second += 10;
+		break;
+	case 2:
+		countdown_timer_ptr->minute++;
+		break;
+	case 3:
+		if (countdown_timer_ptr->minute < 241) {
+			countdown_timer_ptr->minute += 10;
+		}
+		else {
+			countdown_timer_ptr->minute -= 190;
+		}
+		break;
+	case 4:
+		switch (countdown_timer_ptr->minute / 100)
+		{
+		case 0: case 1:
+			countdown_timer_ptr->minute += 100;
+			break;
+		case 2:
+			countdown_timer_ptr->minute -= 200;
+		default:
+			break;
+		}
+		break;
+	case 5:
+		countdown_timer_ptr->music++;
+		if (countdown_timer_ptr->music > MUSIC_NUMBER) {
+			countdown_timer_ptr->music = 0;
+		}
+
+		if (countdown_timer_ptr->music == 0) {
+			G_countdown_timer_state = COUNTDOWN_TIMER_STOPING;
+		}
+		else {
+			G_countdown_timer_state = COUNTDOWN_TIMER_COUNTING;
+		}
+		break;
+	case 6:
+		break;
+	default:
+		break;
+	}
+	return countdownTimerCorrection(countdown_timer_ptr, 1);
 }
 
 unsigned char isTimeEqualsClock(time *ptr, clock *clk) {
@@ -605,6 +774,9 @@ void dealWithKeyPressed(unsigned char keycode) {
 					break;
 				}
 				break;
+			case 6:
+				G_setting_bit = (G_setting_bit + 1) % 7;
+				break;
 			default:
 				break;
 			}
@@ -626,7 +798,7 @@ void dealWithKeyPressed(unsigned char keycode) {
 					clockToArray(G_pointer_clock);
 					break;
 				case 5:
-					//todo key(R) pressed
+					//key(R) pressed
 					switch (G_stopwatch_state)
 					{
 					case STOPWATCH_STOPING:
@@ -647,6 +819,10 @@ void dealWithKeyPressed(unsigned char keycode) {
 					default:
 						break;
 					}
+					break;
+				case 6:
+					setCountdownTimer(G_pointer_countdown_timer, G_setting_bit);
+					countdownTimerToArray(G_pointer_countdown_timer, &G_countdown_timer_array);
 					break;
 				default:
 					break;
@@ -687,7 +863,7 @@ void execute(unsigned char mode) {
 			}
 			
 			if (G_timer1_count % 5 == 0) {
-				stopwatchIncrement(G_pointer_stopwatch);
+				stopwatchIncrease(G_pointer_stopwatch);
 			}
 
 			if (G_stopwatch_state == STOPWATCH_COUNTING) {
@@ -696,8 +872,9 @@ void execute(unsigned char mode) {
 		}
 		displayStopwatch();
 		break;
-
-		//todo add new mode.
+	case 6:
+		displayCountdownTimerBlink(G_setting_bit);
+		break;
 	default:
 		XBYTE[0x8000] = 0x40 ;
 		XBYTE[0x9000] = led_table[mode];
@@ -759,13 +936,20 @@ void main() {
 		
 		//1s has passed, change time and check whether it's the clock time;
 		if (G_timer0_count == TIMER0_SECOND_COUNT) {
-			timeAutoIncrement(G_pointer_current_time);
+			timeIncrease(G_pointer_current_time);
 			G_timer0_count = 0;
 
+			// if clock is set, check if it's time to play music.
 			if (G_pointer_clock->music != 0) {
 				if (isTimeEqualsClock(G_pointer_current_time, G_pointer_clock) == 1) {
 					startPlayMusic(G_pointer_clock->music);
 				}
+			}
+
+			// if countdown timer is set and is counting, then countdown by 1 second
+			// and check if it's time to play music.
+			if (G_countdown_timer_state == COUNTDOWN_TIMER_COUNTING) {
+				countdownTimerDecreaseOrPlayMusic(G_pointer_countdown_timer);
 			}
 		}
 
@@ -843,6 +1027,5 @@ void timer1() interrupt 3{
 	}
 	G_timer1_count++;
 	G_timer1_flag = 1;
-	//todo stopwatch
 }
  
