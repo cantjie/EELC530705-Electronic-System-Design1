@@ -2,7 +2,7 @@
 #include <absacc.h>
 
 #define TIMER0_SECOND_COUNT 20
-#define MUSIC_NUMBER 2  // below 10 //todo
+#define MUSIC_NUMBER 2  // below 10 
 #define MAX_MUSIC_LENGTH 40
 #define TIMER0_BEAT_LENGTH 4  // delay time of 1/4 beat ,
 
@@ -107,6 +107,7 @@ music music_if_love = {
 	FC8D	FCED	FD43	FD6A	FDB3	FDF3	FE2C
 	FE46	FE76	FEA1	FEB5	FED9	FEF9	FF14
 	*/
+
 unsigned char G_score_to_TH[27] = {
 	0xF9,0xF9,0xFA,0xFA,0xFB,0xFB,0xFC,0x00,0x00,0x00,
 	0xFC,0xFC,0xFD,0xFD,0xFD,0xFD,0xFE,0x00,0x00,0x00,
@@ -123,7 +124,7 @@ unsigned char G_stopwatch_state = STOPWATCH_STOPING;
 
 unsigned char G_countdown_timer_state = COUNTDOWN_TIMER_STOPING;
 
-unsigned char G_max_day[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+unsigned char G_max_days_per_month[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
 unsigned char G_time_array[8] = { 0,0,12,0,0,12,0,0 };
 unsigned char G_date_array[12] = { 2,0,1,9,12,0,1,12,0,1,10,10 };
 unsigned char G_stopwatch_array[8] = { 0,0,12,0,0,12,0,0 };
@@ -159,7 +160,7 @@ unsigned char isLeap(time *ptr) {
 	}
 }
 
-// this function has no use.
+// this function has never been called to.
 void delayByMs(unsigned char time) {
 	static unsigned char i;
 	for (; time > 0; time--);
@@ -211,7 +212,7 @@ time *timeCorrection(time *ptr,unsigned char setting_mode) {
 			ptr->day++;
 		}
 
-		if (ptr->day > G_max_day[ptr->month - 1]) {
+		if (ptr->day > G_max_days_per_month[ptr->month - 1]) {
 			ptr->day = 1;
 			ptr->month++;
 		}
@@ -221,11 +222,11 @@ time *timeCorrection(time *ptr,unsigned char setting_mode) {
 			ptr->year++;
 			if (isLeap(ptr)) {
 				ptr->isLeap = 1;
-				G_max_day[1] = 29;
+				G_max_days_per_month[1] = 29;
 			}
 			else {
 				ptr->isLeap = 0;
-				G_max_day[1] = 28;
+				G_max_days_per_month[1] = 28;
 			}
 		}
 	}
@@ -242,7 +243,7 @@ time *timeCorrection(time *ptr,unsigned char setting_mode) {
 			ptr->hour -= 20;
 		}
 
-		if (ptr->day > G_max_day[ptr->month - 1]) {
+		if (ptr->day > G_max_days_per_month[ptr->month - 1]) {
 			ptr->day = 1;
 		}
 
@@ -252,11 +253,11 @@ time *timeCorrection(time *ptr,unsigned char setting_mode) {
 
 		if (isLeap(ptr)) {
 			ptr->isLeap = 1;
-			G_max_day[1] = 29;
+			G_max_days_per_month[1] = 29;
 		}
 		else {
 			ptr->isLeap = 0;
-			G_max_day[1] = 28;
+			G_max_days_per_month[1] = 28;
 		}
 	}
 	return ptr;
@@ -896,7 +897,6 @@ void startPlayMusic(unsigned char music_num) {
 		break;
 	case 2:
 		G_music_playing_ptr = &music_if_love;
-		//todo add new music
 	default:
 		break;
 	}
