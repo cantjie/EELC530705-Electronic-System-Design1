@@ -13,6 +13,7 @@
 #define COUNTDOWN_TIMER_COUNTING 0x01
 #define COUNTDOWN_TIMER_STOPING 0x00
 
+
 sbit beep_pin = P1 ^ 6;
 
 typedef struct Time
