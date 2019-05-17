@@ -9,7 +9,7 @@
 :--:|:--:
 exp2_clock | 单片机实验之万年历与数字钟
 frequency_meter| 心率测量计之单片机部分频率计
-
+exp3_temperature | 温度测量与控制系统设计
 
 # License
 ```
