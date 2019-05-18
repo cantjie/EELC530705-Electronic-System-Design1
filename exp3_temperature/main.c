@@ -1,15 +1,31 @@
 #include<REG51.h>
 #include<absacc.h>
-#define DELAY_TIMES 1
+
+#define LCD_DELAY_TIMES 1
+#define HOW_MANY_TIMER0_BE_SECOND 100
+// todo about PID
+#define PID_K_P 0.1
+#define PID_K_I 0.1
+#define PID_K_D 0.05
+#define TEMPERATURE_DIFFERENCE_THRESHOLD 500
 
 unsigned char G_timer0_count = 0;
 unsigned char G_timer0_flag = 0;
 unsigned char G_keycode = 0;
 unsigned char G_key_pressing_flag = 0;
-unsigned char G_setting_temperature = 60;
-unsigned char G_measured_temperature = 0;
-unsigned char G_LCD_table[2][16] = { {'s','e','t','t','i','n','g',':',0x20,0x20,0x20,0x20,'6','0',0xDF,'C'},
-					{'m','e','a','s','u','r','e','d',':',0x20,0x20,0x20,'0','0',0xDF,'C'} };
+unsigned int G_setting_temperature = 3000;
+unsigned int G_measured_temperature = 0;
+unsigned char G_LCD_table[2][16] = { {'s','e','t','t','i','n','g',':',0x20,0x20,'6','0','.','0',0xDF,'C'},
+					{'m','e','a','s','u','r','e','d',':',0x20,'0','0','.','0',0xDF,'C'} };
+unsigned long G_pid_sum = 0;
+unsigned int G_pid_difference = 0;
+unsigned int G_pid_last_temperature_difference = 0;
+unsigned char G_duty_cycle = HOW_MANY_TIMER0_BE_SECOND;
+
+sbit pin_sclk = P1 ^ 2;
+sbit pin_ADC_dataout = P1 ^ 3;
+sbit pin_ADC_cs = P1 ^ 4;
+sbit pin_PWM_out = P1 ^ 7;
 
 void delay(unsigned char times);
 void LCDWriteControl(unsigned char control_word);
@@ -17,23 +33,30 @@ void LCDWriteData(unsigned char data_word);
 void LCDWriteString(unsigned char * str_ptr, unsigned short length);
 void LCDInit();
 void LCDRefresh();
+unsigned int ADCRead();
+unsigned int ADCToTemperature(unsigned int ADC_data);
 unsigned char getKeycode(void);
 void timerAndInterruptInit();
 void setTemperature(unsigned char keycode);
 void refreshLCDTable(unsigned char mode);
+void PIDInit();
+void PIDupdate();
+unsigned char getDutyCycle();
+void PWMoutput();
 
 
-
-void main() 
+void main()
 {
 	int i = 0;
 	unsigned char keycode = 0x00;
+	unsigned char key_scan_flag = 0;
 	LCDInit();
 	timerAndInterruptInit();
-	
+	ADCRead(); // ADC init
+
 	while (1) {
 		// scan keyboard every 50ms
-		if (G_timer0_flag) {
+		if ((0 == G_timer0_count % 5) && (0 == key_scan_flag)) {
 			keycode = getKeycode();
 			if (keycode) {
 				if (G_key_pressing_flag) {
@@ -47,18 +70,33 @@ void main()
 			else {
 				G_key_pressing_flag = 0;
 			}
-			G_timer0_flag = 0;
+			key_scan_flag = 1;
+		}
+		else {
+			key_scan_flag = 0;
 		}
 
+		// set temperature
 		if (G_keycode) {
 			setTemperature(keycode);
 			G_keycode = 0;
+			PIDInit();
 		}
-	}	
+
+		// 1s passed
+		if (HOW_MANY_TIMER0_BE_SECOND == G_timer0_count) {
+			// first, get the measured temperature.
+			G_measured_temperature = ADCToTemperature(ADCRead());
+			LCDRefresh();
+			G_duty_cycle = getDutyCycle();
+			PWMoutput();
+			G_timer0_count = 0;
+		}
+	}
 }
 
 
-void delay(unsigned char times) 
+void delay(unsigned char times)
 {
 	int i = 0, j = 0;
 	for (i = 0; i < times; i++) {
@@ -69,21 +107,21 @@ void delay(unsigned char times)
 }
 
 
-void LCDWriteControl(unsigned char control_word) 
+void LCDWriteControl(unsigned char control_word)
 {
 	XBYTE[0xA000] = control_word;
-	delay(DELAY_TIMES);
+	delay(LCD_DELAY_TIMES);
 }
 
 
-void LCDWriteData(unsigned char data_word) 
+void LCDWriteData(unsigned char data_word)
 {
 	XBYTE[0xA002] = data_word;
-	delay(DELAY_TIMES);
+	delay(LCD_DELAY_TIMES);
 }
 
 
-void LCDWriteString(unsigned char *str_ptr, unsigned short length) 
+void LCDWriteString(unsigned char *str_ptr, unsigned short length)
 {
 	short i = 0;
 	for (i = 0; i < length; i++) {
@@ -92,13 +130,13 @@ void LCDWriteString(unsigned char *str_ptr, unsigned short length)
 }
 
 
-void LCDInit() 
+void LCDInit()
 {
-	LCDWriteControl(0x38); // 16*2ÏÔÊ¾£¬5*7µãÕó£¬8Î»Êý¾Ý¿Ú
-	LCDWriteControl(0x0E); // ÉèÖÃ¿ªÆôÏÔÊ¾£¬²»ÏÔÊ¾¹â±ê
-	LCDWriteControl(0x06); // Ð´Ò»¸ö×Ö·ûºóµØÖ·Ö¸Õë+1
-	LCDWriteControl(0x01); // ÏÔÊ¾ÇåÁã£¬Êý¾ÝÖ¸ÕëÇåÁã0
-	LCDWriteControl(0x80 + 0x01); // ÉèÖÃÊý¾ÝµØÖ·Ö¸Õë´ÓµÚÒ»¸ö¿ªÊ¼
+	LCDWriteControl(0x38); // 16*2æ˜¾ç¤ºï¼Œ5*7ç‚¹é˜µï¼Œ8ä½æ•°æ®å£
+	LCDWriteControl(0x0E); // è®¾ç½®å¼€å¯æ˜¾ç¤ºï¼Œä¸æ˜¾ç¤ºå…‰æ ‡
+	LCDWriteControl(0x06); // å†™ä¸€ä¸ªå­—ç¬¦åŽåœ°å€æŒ‡é’ˆ+1
+	LCDWriteControl(0x01); // æ˜¾ç¤ºæ¸…é›¶ï¼Œæ•°æ®æŒ‡é’ˆæ¸…é›¶0
+	LCDWriteControl(0x80 + 0x01); // è®¾ç½®æ•°æ®åœ°å€æŒ‡é’ˆä»Žç¬¬ä¸€ä¸ªå¼€å§‹
 	LCDWriteString(G_LCD_table[0], 16);
 	LCDWriteControl(0x80 + 0x40);
 	LCDWriteString(G_LCD_table[1], 16);
@@ -115,29 +153,55 @@ void LCDRefresh()
 }
 
 
-unsigned char getKeycode(void) 
+unsigned int ADCRead() 
 {
-	//×æ´«´úÂë
-	unsigned char line = 0x00;        //ÐÐÂë
-	unsigned char col = 0x00;		 //ÁÐÂë
-	unsigned char scancode = 0x01;    //ÐÐÉ¨ÃèÂë
-	unsigned char keycode;          //¼üºÅ
+	unsigned int ADC_data = 0;
+	unsigned char i = 0;
+	pin_ADC_cs = 0;
+	for (i = 0; i < 10; i++)
+	{
+		pin_sclk = 0;
+		pin_sclk = 1; // ä¸Šå‡æ²¿è¯»æ•°æ®
+		ADC_data |= (pin_ADC_dataout & 0x01);
+		ADC_data <<= 1;
+	}
+	pin_ADC_cs = 1;//ç‰‡é€‰ç¦æ­¢
+	return ADC_data;
+}
+
+
+unsigned int ADCToTemperature(unsigned int ADC_data)
+{
+	//todo
+	return (ADC_data * 5 / 1024);
+	// Voltage = 5V / 1024 * ADC_data
+	// temperature = f(Voltage) about= K * Voltage
+}
+
+
+unsigned char getKeycode(void)
+{
+	//ç¥–ä¼ ä»£ç 
+	unsigned char line = 0x00;        //è¡Œç 
+	unsigned char col = 0x00;		 //åˆ—ç 
+	unsigned char scancode = 0x01;    //è¡Œæ‰«æç 
+	unsigned char keycode;          //é”®å·
 	XBYTE[0x8000] = 0xff;
-	col = XBYTE[0x8000] & 0x0f;      //´ÓÁÐ¶Ë¿Ú¶ÁÈëËÄÎ»ÁÐÂë
+	col = XBYTE[0x8000] & 0x0f;      //ä»Žåˆ—ç«¯å£è¯»å…¥å››ä½åˆ—ç 
 	if (col == 0x00) {
 		keycode = 0x00;
 	}
 	else
 	{
-		while ((scancode & 0x0f) != 0) //È¡scancodeµÄµÍËÄÎ»£¬Ã»±äÎªÈ«0£¬Ñ­»·
+		while ((scancode & 0x0f) != 0) //å–scancodeçš„ä½Žå››ä½ï¼Œæ²¡å˜ä¸ºå…¨0ï¼Œå¾ªçŽ¯
 		{
-			line = scancode;                //ÐÐºÅ
-			XBYTE[0x8000] = scancode;     //¸øÐÐ¸³É¨ÃèÂë£¬µÚÒ»ÐÐÎª0x01
-			if ((XBYTE[0x8000] & 0x0f) == col) //¼ì²â°´¼üËùÔÚµÄÐÐÌø³öÑ­»·
+			line = scancode;                //è¡Œå·
+			XBYTE[0x8000] = scancode;     //ç»™è¡Œèµ‹æ‰«æç ï¼Œç¬¬ä¸€è¡Œä¸º0x01
+			if ((XBYTE[0x8000] & 0x0f) == col) //æ£€æµ‹æŒ‰é”®æ‰€åœ¨çš„è¡Œè·³å‡ºå¾ªçŽ¯
 				break;
-			scancode = scancode << 1;         //ÐÐÉ¨ÃèÂë×óÒÆÒ»Î»£¬×ªÏÂÒ»ÐÐ
+			scancode = scancode << 1;         //è¡Œæ‰«æç å·¦ç§»ä¸€ä½ï¼Œè½¬ä¸‹ä¸€è¡Œ
 		}
-		col = col << 4;                     //°ÑÐÐÂëÒÆµ½¸ßËÄÎ»
+		col = col << 4;                     //æŠŠè¡Œç ç§»åˆ°é«˜å››ä½
 		keycode = col | line;
 	}
 	return keycode;
@@ -150,14 +214,14 @@ void timerAndInterruptInit()
 
 	TMOD = 0x11;	// set timer0 and timer1 to mode 1
 
-	// (65535-X)*12/11.0592us = 50ms; X=19455;
-	TH0 = 0x4B;		// load 19455D to timer0
+	// (65535-X)*12/11.0592us = 10ms; X = 56319;
+	TH0 = 0xDB;		// load 56319D to timer0
 	TL0 = 0xFF;
 	TR0 = 1;		// start timer0
 	ET0 = 1;		// enable timer0 interrupt
 
-	// (65535-X)*12/11.0592us=2ms; X=63691£»  
-	//TH1 = 0xF8;		// load 63691 to timer1 £¬2ms
+	// (65535-X)*12/11.0592us=2ms; X=63691ï¼›  
+	//TH1 = 0xF8;		// load 63691 to timer1 ï¼Œ2ms
 	//TL1 = 0xCB;
 	//TR1 = 1;		// start timer0
 	//ET1 = 1;		// enable timer0 interrupt
@@ -168,17 +232,17 @@ void setTemperature(unsigned char keycode)
 {
 	switch (keycode)
 	{
-	case 0x14: //row 3 col 1
-		G_setting_temperature = (G_setting_temperature == 100) ? 100 : G_setting_temperature + 1;
+	case 0x12: //row 3 col 1
+		G_setting_temperature = (G_setting_temperature == 10000) ? 10000 : G_setting_temperature + 100;
 		break;
-	case 0x24:
-		G_setting_temperature = (G_setting_temperature == 0) ? 0 : G_setting_temperature - 1;
+	case 0x22:
+		G_setting_temperature = (G_setting_temperature == 0) ? 0 : G_setting_temperature - 100;
 		break;
-	case 0x44:
-		G_setting_temperature = (G_setting_temperature + 10 >= 100) ? 100 : G_setting_temperature + 10;
+	case 0x42:
+		G_setting_temperature = (G_setting_temperature  >= 9000) ? 10000 : G_setting_temperature + 1000;
 		break;
-	case 0x84:
-		G_setting_temperature = (G_setting_temperature - 10 >= 100) ? 0 : G_setting_temperature - 10;
+	case 0x82:
+		G_setting_temperature = (G_setting_temperature  <= 1000) ? 0 : G_setting_temperature - 1000;
 		break;
 	default:
 		break;
@@ -188,25 +252,86 @@ void setTemperature(unsigned char keycode)
 }
 
 
-void refreshLCDTable(unsigned char mode) 
+void refreshLCDTable(unsigned char mode)
 {
+	unsigned int temp = 0;
 	if (mode & 0x01) {
+		temp = G_setting_temperature;
 		// refresh setting temperature
-		G_LCD_table[0][13] = G_setting_temperature % 10 + 0x30;
-		G_LCD_table[0][12] = (G_setting_temperature / 10) % 10 + 0x30;
-		G_LCD_table[0][11] = (G_setting_temperature / 100) == 0 ? 0x20 : '1';
+		temp /= 10;
+		G_LCD_table[0][13] = temp % 10 + 0x30;
+		temp /= 10;
+		G_LCD_table[0][11] = temp % 10 + 0x30;
+		temp /= 10;
+		G_LCD_table[0][10] = temp % 10 + 0x30;
+		temp /= 10;
+		G_LCD_table[0][9] = 0 == temp ? 0x20: '1';
 	}
 	if (mode && 0x02) {
 		// refresh measured temperature
-		G_LCD_table[1][13] = G_measured_temperature % 10 + 0x30;
-		G_LCD_table[1][12] = (G_measured_temperature / 10) % 10 + 0x30;
-		G_LCD_table[1][11] = (G_measured_temperature / 100) == 0 ? 0x20 : '1';
+		temp = G_measured_temperature;
+		G_LCD_table[1][13] = temp / 10 % 10 + 0x30;
+		temp /= 10;
+		G_LCD_table[1][11] = temp % 10 + 0x30;
+		temp /= 10;
+		G_LCD_table[1][10] = temp % 10 + 0x30;
+		temp /= 10;
+		G_LCD_table[1][9] = 0 == temp ? 0x20: '1';
+	}
+}
+
+
+void PIDInit()
+{
+	G_pid_sum = 0;
+	G_pid_last_temperature_difference = 0;
+	G_pid_difference = 0;
+}
+
+
+void PIDupdate() 
+{
+	int temperature_difference = 0;
+	temperature_difference = G_setting_temperature - G_measured_temperature;
+	G_pid_sum += temperature_difference;
+	G_pid_difference = temperature_difference - G_pid_last_temperature_difference;
+	G_pid_last_temperature_difference = temperature_difference;
+}
+
+
+unsigned char getDutyCycle() 
+{	
+	//todo this function could be update.
+	float duty_cycle = 0;
+	PIDupdate();
+	duty_cycle = PID_K_P * G_pid_last_temperature_difference + PID_K_P * G_pid_sum + PID_K_D * G_pid_difference;
+	if (duty_cycle > 100) {
+		return G_duty_cycle = 100;
+	}
+	else {
+		if (duty_cycle < 0) {
+			return G_duty_cycle = 0;
+		}
+		else {
+			return G_duty_cycle = (unsigned char)duty_cycle;
+		}
+	}
+}
+
+
+void PWMoutput()
+{
+	if (G_timer0_count < G_duty_cycle) {
+		pin_PWM_out = 1;
+	}
+	else {
+		pin_PWM_out = 0;
 	}
 }
 
 
 void timer0() interrupt 1 {
-	TH0 = 0x4B;		// load 19455D to timer0, 50ms.
+	TH0 = 0xDB;		// load 56319D to timer0, 10ms.
 	TL0 = 0xFF;
 	G_timer0_count++;
 	G_timer0_flag = 1;
