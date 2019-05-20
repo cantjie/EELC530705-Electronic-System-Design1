@@ -1,3 +1,6 @@
+/*
+此文件为刘茂丽和Cantjie合作成果。
+*/
 #include <REG51.H>
 #include <absacc.h>
 

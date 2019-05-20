@@ -4,23 +4,25 @@
 #define LCD_DELAY_TIMES 1
 #define HOW_MANY_TIMER0_BE_SECOND 100
 // todo about PID
-#define PID_K_P 0.1
-#define PID_K_I 0.1
+#define PID_K_P 0.01
+#define PID_K_I 0.001
 #define PID_K_D 0.05
 #define TEMPERATURE_DIFFERENCE_THRESHOLD 500
 
+unsigned char G_led_ref[] = { 0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f,0x00,0x08,0x40,0x79 };
+unsigned char G_led_table[4] = {0};
 unsigned char G_timer0_count = 0;
-unsigned char G_timer0_flag = 0;
+unsigned char G_timer0_flag = 0; 
 unsigned char G_keycode = 0;
 unsigned char G_key_pressing_flag = 0;
 unsigned int G_setting_temperature = 3000;
 unsigned int G_measured_temperature = 0;
-unsigned char G_LCD_table[2][16] = { {'s','e','t','t','i','n','g',':',0x20,0x20,'6','0','.','0',0xDF,'C'},
+unsigned char G_LCD_table[2][16] = { {'s','e','t','t','i','n','g',':',0x20,0x20,'3','0','.','0',0xDF,'C'},
 					{'m','e','a','s','u','r','e','d',':',0x20,'0','0','.','0',0xDF,'C'} };
-unsigned long G_pid_sum = 0;
-unsigned int G_pid_difference = 0;
-unsigned int G_pid_last_temperature_difference = 0;
-unsigned char G_duty_cycle = HOW_MANY_TIMER0_BE_SECOND;
+long G_pid_sum = 0;
+int G_pid_difference = 0;
+int G_pid_last_temperature_difference = 0;
+unsigned int G_duty_cycle = HOW_MANY_TIMER0_BE_SECOND;
 
 sbit pin_sclk = P1 ^ 2;
 sbit pin_ADC_dataout = P1 ^ 3;
@@ -28,13 +30,16 @@ sbit pin_ADC_cs = P1 ^ 4;
 sbit pin_PWM_out = P1 ^ 7;
 
 void delay(unsigned char times);
-void LCDWriteControl(unsigned char control_word);
+void LCDWriteCommand(unsigned char control_word);
 void LCDWriteData(unsigned char data_word);
 void LCDWriteString(unsigned char * str_ptr, unsigned short length);
 void LCDInit();
 void LCDRefresh();
 unsigned int ADCRead();
 unsigned int ADCToTemperature(unsigned int ADC_data);
+void ADCToLEDTable(unsigned int ADC_data);
+void dutyCycleToLEDTable();
+void LEDDisplay();
 unsigned char getKeycode(void);
 void timerAndInterruptInit();
 void setTemperature(unsigned char keycode);
@@ -50,6 +55,7 @@ void main()
 	int i = 0;
 	unsigned char keycode = 0x00;
 	unsigned char key_scan_flag = 0;
+	unsigned int ADC_data = 0;
 	LCDInit();
 	timerAndInterruptInit();
 	ADCRead(); // ADC init
@@ -83,10 +89,19 @@ void main()
 			PIDInit();
 		}
 
+		if (1 == G_timer0_flag) {
+			LEDDisplay();
+			G_timer0_flag = 0;
+		}
+
 		// 1s passed
 		if (HOW_MANY_TIMER0_BE_SECOND == G_timer0_count) {
 			// first, get the measured temperature.
-			G_measured_temperature = ADCToTemperature(ADCRead());
+			ADC_data = ADCRead();
+			G_measured_temperature = ADCToTemperature(ADC_data);
+			//ADCToLEDTable(ADC_data);
+			dutyCycleToLEDTable();
+			refreshLCDTable(0x01 | 0x02);
 			LCDRefresh();
 			G_duty_cycle = getDutyCycle();
 			PWMoutput();
@@ -107,7 +122,7 @@ void delay(unsigned char times)
 }
 
 
-void LCDWriteControl(unsigned char control_word)
+void LCDWriteCommand(unsigned char control_word)
 {
 	XBYTE[0xA000] = control_word;
 	delay(LCD_DELAY_TIMES);
@@ -132,23 +147,23 @@ void LCDWriteString(unsigned char *str_ptr, unsigned short length)
 
 void LCDInit()
 {
-	LCDWriteControl(0x38); // 16*2显示，5*7点阵，8位数据口
-	LCDWriteControl(0x0E); // 设置开启显示，不显示光标
-	LCDWriteControl(0x06); // 写一个字符后地址指针+1
-	LCDWriteControl(0x01); // 显示清零，数据指针清零0
-	LCDWriteControl(0x80 + 0x01); // 设置数据地址指针从第一个开始
+	LCDWriteCommand(0x38); // 16*2显示，5*7点阵，8位数据口
+	LCDWriteCommand(0x0E); // 设置开启显示，不显示光标
+	LCDWriteCommand(0x06); // 写一个字符后地址指针+1
+	LCDWriteCommand(0x01); // 显示清零，数据指针清零0
+	LCDWriteCommand(0x80 + 0x01); // 设置数据地址指针从第一个开始
 	LCDWriteString(G_LCD_table[0], 16);
-	LCDWriteControl(0x80 + 0x40);
+	LCDWriteCommand(0x80 + 0x40);
 	LCDWriteString(G_LCD_table[1], 16);
 }
 
 
 void LCDRefresh()
 {
-	LCDWriteControl(0x01);
-	LCDWriteControl(0x80 + 0x01);
+	LCDWriteCommand(0x01);
+	LCDWriteCommand(0x80 + 0x01);
 	LCDWriteString(G_LCD_table[0], 16);
-	LCDWriteControl(0x80 + 0x40);
+	LCDWriteCommand(0x80 + 0x40);
 	LCDWriteString(G_LCD_table[1], 16);
 }
 
@@ -164,7 +179,9 @@ unsigned int ADCRead()
 		pin_sclk = 1; // 上升沿读数据
 		ADC_data |= (pin_ADC_dataout & 0x01);
 		ADC_data <<= 1;
+		delay(1);
 	}
+	ADC_data >>= 1;
 	pin_ADC_cs = 1;//片选禁止
 	return ADC_data;
 }
@@ -172,10 +189,38 @@ unsigned int ADCRead()
 
 unsigned int ADCToTemperature(unsigned int ADC_data)
 {
-	//todo
-	return (ADC_data * 5 / 1024);
-	// Voltage = 5V / 1024 * ADC_data
-	// temperature = f(Voltage) about= K * Voltage
+	//return ADC_data * 1024 * 10000;
+	return ADC_data * 10;
+}
+
+
+void ADCToLEDTable(unsigned int ADC_data)
+{
+	short i = 0;
+	for (i = 0; i < 4; i++) {
+		G_led_table[i] = ADC_data % 10;
+		ADC_data /= 10;
+	}
+}
+
+
+void dutyCycleToLEDTable()
+{
+	short i = 0;
+	for (i = 0; i < 4; i++) {
+		G_led_table[i] = G_duty_cycle % 10;
+		G_duty_cycle /= 10;
+	}
+	
+}
+
+
+void LEDDisplay() {
+	static unsigned char shift = 0;
+	shift += 1;
+	shift %= 4;
+	XBYTE[0x8000] = 0x01 << shift;
+	XBYTE[0x9000] = G_led_ref[G_led_table[shift]];
 }
 
 
@@ -232,16 +277,16 @@ void setTemperature(unsigned char keycode)
 {
 	switch (keycode)
 	{
-	case 0x12: //row 3 col 1
+	case 0x14: //row 3 col 1
 		G_setting_temperature = (G_setting_temperature == 10000) ? 10000 : G_setting_temperature + 100;
 		break;
-	case 0x22:
+	case 0x24:
 		G_setting_temperature = (G_setting_temperature == 0) ? 0 : G_setting_temperature - 100;
 		break;
-	case 0x42:
+	case 0x44:
 		G_setting_temperature = (G_setting_temperature  >= 9000) ? 10000 : G_setting_temperature + 1000;
 		break;
-	case 0x82:
+	case 0x84:
 		G_setting_temperature = (G_setting_temperature  <= 1000) ? 0 : G_setting_temperature - 1000;
 		break;
 	default:
@@ -267,10 +312,11 @@ void refreshLCDTable(unsigned char mode)
 		temp /= 10;
 		G_LCD_table[0][9] = 0 == temp ? 0x20: '1';
 	}
-	if (mode && 0x02) {
+	if (mode & 0x02) {
 		// refresh measured temperature
 		temp = G_measured_temperature;
-		G_LCD_table[1][13] = temp / 10 % 10 + 0x30;
+		temp /= 10;
+		G_LCD_table[1][13] = temp % 10 + 0x30;
 		temp /= 10;
 		G_LCD_table[1][11] = temp % 10 + 0x30;
 		temp /= 10;
@@ -304,7 +350,16 @@ unsigned char getDutyCycle()
 	//todo this function could be update.
 	float duty_cycle = 0;
 	PIDupdate();
-	duty_cycle = PID_K_P * G_pid_last_temperature_difference + PID_K_P * G_pid_sum + PID_K_D * G_pid_difference;
+	duty_cycle = PID_K_P * G_pid_last_temperature_difference + PID_K_I * G_pid_sum + PID_K_D * G_pid_difference;
+	//duty_cycle = 0.001*G_pid_last_temperature_difference + PID_K_I * G_pid_sum + PID_K_D * G_pid_difference;
+	//duty_cycle = G_pid_sum;
+
+	if (duty_cycle < 0) {
+		return G_duty_cycle = 0;
+	}
+	return  (G_duty_cycle = (unsigned int)duty_cycle);
+	
+	
 	if (duty_cycle > 100) {
 		return G_duty_cycle = 100;
 	}
@@ -313,7 +368,7 @@ unsigned char getDutyCycle()
 			return G_duty_cycle = 0;
 		}
 		else {
-			return G_duty_cycle = (unsigned char)duty_cycle;
+			return G_duty_cycle = (unsigned int)duty_cycle;
 		}
 	}
 }
