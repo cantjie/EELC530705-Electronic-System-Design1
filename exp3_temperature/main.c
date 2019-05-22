@@ -4,9 +4,9 @@
 #define LCD_DELAY_TIMES 1
 #define HOW_MANY_TIMER0_BE_SECOND 100
 // todo about PID
-#define PID_K_P 0.01
-#define PID_K_I 0.001
-#define PID_K_D 0.05
+#define PID_K_P 0.03
+#define PID_K_I 0.000010
+#define PID_K_D 0.001
 #define TEMPERATURE_DIFFERENCE_THRESHOLD 500
 
 unsigned char G_led_ref[] = { 0x3f,0x06,0x5b,0x4f,0x66,0x6d,0x7d,0x07,0x7f,0x6f,0x00,0x08,0x40,0x79 };
@@ -93,7 +93,6 @@ void main()
 			LEDDisplay();
 			G_timer0_flag = 0;
 		}
-
 		// 1s passed
 		if (HOW_MANY_TIMER0_BE_SECOND == G_timer0_count) {
 			// first, get the measured temperature.
@@ -104,9 +103,9 @@ void main()
 			refreshLCDTable(0x01 | 0x02);
 			LCDRefresh();
 			G_duty_cycle = getDutyCycle();
-			PWMoutput();
 			G_timer0_count = 0;
 		}
+		PWMoutput();
 	}
 }
 
@@ -189,7 +188,7 @@ unsigned int ADCRead()
 
 unsigned int ADCToTemperature(unsigned int ADC_data)
 {
-	//return ADC_data * 1024 * 10000;
+	//return ADC_data / 1024 * 10000;
 	return ADC_data * 10;
 }
 
@@ -351,14 +350,7 @@ unsigned char getDutyCycle()
 	float duty_cycle = 0;
 	PIDupdate();
 	duty_cycle = PID_K_P * G_pid_last_temperature_difference + PID_K_I * G_pid_sum + PID_K_D * G_pid_difference;
-	//duty_cycle = 0.001*G_pid_last_temperature_difference + PID_K_I * G_pid_sum + PID_K_D * G_pid_difference;
-	//duty_cycle = G_pid_sum;
 
-	if (duty_cycle < 0) {
-		return G_duty_cycle = 0;
-	}
-	return  (G_duty_cycle = (unsigned int)duty_cycle);
-	
 	
 	if (duty_cycle > 100) {
 		return G_duty_cycle = 100;
